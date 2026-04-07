@@ -1,0 +1,52 @@
+# ============================================================
+#  .gitignore — Web VTuber Pro
+#  Pure frontend project (HTML + CSS + JS, no build toolchain)
+# ============================================================
+
+# ── OS generated files ──────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── Editor / IDE ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*~
+
+# ── Node (if ever used for local dev server only) ────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# ── Build output (not applicable now, but future-proof) ──────
+dist/
+build/
+out/
+
+# ── Temporary / local test files ─────────────────────────────
+*.local
+*.tmp
+*.bak
+*.log
+
+# ── Screenshots captured by the app (user-generated) ─────────
+# Uncomment if you store screenshots locally:
+# screenshots/
+
+# ── Secrets / environment (keep out of repo) ─────────────────
+.env
+.env.*
