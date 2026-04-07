@@ -2,9 +2,8 @@
  * js/facelandmark.js — Web VTuber Pro
  * "Bộ não" xử lý toàn bộ dữ liệu khuôn mặt từ MediaPipe FaceLandmarker.
  *
- * Phụ thuộc:
- *   - MediaPipe FaceLandmarker đã được load qua CDN trước file này
- *     (window.FaceLandmarkerTask hoặc window.FaceLandmarker từ @mediapipe/tasks-vision)
+ * MediaPipe được load động bên trong init() với 3 CDN fallback.
+ * Không cần <script src> CDN tĩnh trong index.html.
  *
  * Export global:
  *   window.FaceLandmarkDetector  — class chính, xem phần cuối file
@@ -258,67 +257,101 @@ class FaceLandmarkDetector {
     this.isRunning      = false;
     this.callbacks      = {};
     this._detectLoop    = this._detectLoop.bind(this);
+
+    // _visionPromise được khởi động ngay trong constructor
+    // để bắt đầu tải MediaPipe càng sớm càng tốt (song song với init của app).
+    // startCamera() sẽ await promise này trước khi chạy.
+    this._visionPromise = this._loadMediaPipe();
+  }
+
+  // ── Private: Load MediaPipe với 3 CDN fallback ──
+
+  /**
+   * Thử load @mediapipe/tasks-vision lần lượt từ 3 CDN.
+   * Trả về object { FaceLandmarker, FilesetResolver, wasmPath }.
+   * Ném Error nếu tất cả CDN đều thất bại.
+   *
+   * Dùng dynamic import() — hoạt động trong Safari iOS 15+ mà không cần
+   * type="module" trên thẻ <script> bên ngoài (các file js khác vẫn
+   * dùng global window.XXX bình thường).
+   *
+   * @returns {Promise<{FaceLandmarker: Function, FilesetResolver: Function, wasmPath: string}>}
+   */
+  async _loadMediaPipe() {
+    // 3 CDN fallback theo thứ tự ưu tiên
+    const CDN_OPTIONS = [
+      {
+        name: 'esm.sh',
+        module: 'https://esm.sh/@mediapipe/tasks-vision@0.10.12',
+        wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm'
+      },
+      {
+        name: 'jsDelivr',
+        module: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/vision_bundle.js',
+        wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm'
+      },
+      {
+        name: 'unpkg',
+        module: 'https://unpkg.com/@mediapipe/tasks-vision@0.10.12/vision_bundle.js',
+        wasm: 'https://unpkg.com/@mediapipe/tasks-vision@0.10.12/wasm'
+      }
+    ];
+
+    let Vision   = null;
+    let wasmPath = null;
+    const errors = [];
+
+    // Thử từng CDN cho đến khi thành công
+    for (const cdn of CDN_OPTIONS) {
+      try {
+        console.log(`[FaceLandmarkDetector] Trying CDN: ${cdn.name}...`);
+        Vision   = await import(cdn.module);
+        wasmPath = cdn.wasm;
+        console.log(`[FaceLandmarkDetector] Loaded from ${cdn.name}`);
+        break;
+      } catch (err) {
+        errors.push(`${cdn.name}: ${err.message}`);
+        console.warn(`[FaceLandmarkDetector] CDN ${cdn.name} failed:`, err.message);
+      }
+    }
+
+    if (!Vision) {
+      throw new Error(
+        'Không thể load MediaPipe từ bất kỳ CDN nào:\n' + errors.join('\n')
+      );
+    }
+
+    const { FaceLandmarker, FilesetResolver } = Vision;
+    return { FaceLandmarker, FilesetResolver, wasmPath };
   }
 
   // ── Init ─────────────────────────────────────
 
   /**
    * Khởi tạo MediaPipe FaceLandmarker.
-   * Tìm FaceLandmarker theo thứ tự:
-   *   1. window.FaceLandmarkerTask
-   *   2. window.FaceLandmarker
-   *   3. window.mpFace
+   * Load thư viện qua dynamic import() với 3 CDN fallback.
+   * Kết quả Vision được cache trong this._visionPromise.
    *
-   * @throws {Error} nếu MediaPipe chưa load hoặc init thất bại
+   * @throws {Error} nếu tất cả CDN thất bại hoặc FaceLandmarker init lỗi
    */
   async init() {
-    const FaceLandmarkerClass =
-      window.FaceLandmarkerTask ||
-      window.FaceLandmarker ||
-      window.mpFace;
+    // Await promise đã được khởi động từ constructor
+    const { FaceLandmarker, FilesetResolver, wasmPath } = await this._visionPromise;
 
-    if (!FaceLandmarkerClass) {
-      throw new Error(
-        '[FaceLandmarkDetector] MediaPipe FaceLandmarker chưa được load.'
-      );
-    }
+    const filesetResolver = await FilesetResolver.forVisionTasks(wasmPath);
 
-    const FilesetResolver =
-      window.FilesetResolver ||
-      (window.mpTasks && window.mpTasks.FilesetResolver);
+    this.faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: {
+        modelAssetPath:
+          'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        delegate: 'CPU'
+      },
+      outputFaceBlendshapes: false,
+      runningMode: 'VIDEO',
+      numFaces: 1
+    });
 
-    if (!FilesetResolver) {
-      throw new Error(
-        '[FaceLandmarkDetector] FilesetResolver không tìm thấy.'
-      );
-    }
-
-    try {
-      // Version WASM đồng nhất với CDN script @0.10.3
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm'
-      );
-
-      this.faceLandmarker = await FaceLandmarkerClass.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-          delegate: 'GPU',
-        },
-        numFaces: 1,
-        minFaceDetectionConfidence: 0.5,
-        minFacePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-        outputFaceBlendshapes: false,
-        runningMode: 'VIDEO',
-      });
-
-      console.info('[FaceLandmarkDetector] Khởi tạo thành công.');
-    } catch (err) {
-      throw new Error(
-        `[FaceLandmarkDetector] Không thể khởi tạo FaceLandmarker: ${err.message}`
-      );
-    }
+    console.log('[FaceLandmarkDetector] Initialized successfully.');
   }
 
   // ── Camera ───────────────────────────────────
