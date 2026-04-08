@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web VTuber Pro – Anime Face Tracking</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0d0d1a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+  .canvas-container { position: relative; width: 100%; max-width: 800px; margin: 0 auto;
+    border-radius: 1rem; overflow: hidden;
+    box-shadow: 0 0 40px rgba(176,106,255,0.4), 0 20px 25px rgba(0,0,0,0.5);
+    background: #1a1a2e; }
+  video, canvas { display: block; width: 100%; height: auto; transform: scaleX(-1); }
+  video { display: none; }
+  .loader { border: 4px solid #2d2d4e; border-top: 4px solid #b06aff;
+    border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .btn-main { background: linear-gradient(135deg,#b06aff,#ff6ab0);
+    transition: all 0.2s; transform: translateY(0); }
+  .btn-main:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(176,106,255,0.5); }
+  .btn-main:active { transform: translateY(0); }
+  .skin-btn { border: 2px solid #2d2d4e; background: #1a1a2e;
+    transition: all 0.2s; border-radius: 0.75rem; padding: 0.5rem 1rem; }
+  .skin-btn:hover { border-color: #b06aff; background: #2d1a4e; }
+  .skin-btn.active { border-color: #b06aff; background: linear-gradient(135deg,rgba(176,106,255,0.2),rgba(255,106,176,0.2));
+    box-shadow: 0 0 12px rgba(176,106,255,0.4); }
+  .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem; }
+  .stat-box { font-family: monospace; font-size: 0.75rem; color: #88ffcc; }
+  .expr-badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px;
+    font-size: 0.85rem; font-weight: 600; background: rgba(176,106,255,0.2);
+    border: 1px solid rgba(176,106,255,0.4); transition: all 0.3s; }
+  #overlay-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.5); color: #fff; padding: 4px 12px; border-radius: 20px;
+    font-size: 0.75rem; pointer-events: none; opacity: 0; transition: opacity 0.5s; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-4 pb-8">
+
+<!-- HEADER -->
+<header class="text-center my-6">
+  <h1 class="text-3xl font-bold mb-1" style="background:linear-gradient(135deg,#b06aff,#ff6ab0);-webkit-background-clip:text;-webkit-text-fill-color:transparent">
+    🎭 Web VTuber Pro
+  </h1>
+  <p class="text-gray-400 text-sm">MediaPipe 478-point face tracking · Anime overlay · 3 skins</p>
+  <p class="text-sm mt-1 font-semibold" style="color:#b06aff;">by 121170906 阮文強</p>
+</header>
+
+<!-- CONTROLS ROW -->
+<div class="flex flex-wrap justify-center gap-3 mb-4">
+  <button id="startBtn" class="btn-main text-white font-semibold py-2 px-8 rounded-full shadow-lg flex items-center gap-2">
+    🎬 Bắt đầu VTuber
+  </button>
+  <button id="camSwitch" class="hidden bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-5 rounded-full shadow transition-colors">
+    🔄 Đổi camera
+  </button>
+  <button id="bgToggle" class="hidden bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-5 rounded-full shadow transition-colors">
+    🖼 Nền thật
+  </button>
+  <button id="screenshotBtn" class="hidden bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-5 rounded-full shadow transition-colors">
+    📸 Chụp ảnh
+  </button>
+</div>
+
+<!-- SKIN SELECTOR -->
+<div class="flex gap-3 mb-4 flex-wrap justify-center">
+  <button class="skin-btn active" data-skin="cat">🐱 Cat</button>
+  <button class="skin-btn" data-skin="rabbit">🐰 Rabbit</button>
+  <button class="skin-btn" data-skin="fox">🦊 Fox</button>
+  <button class="skin-btn" data-skin="bear">🐻 Bear</button>
+  <button class="skin-btn" data-skin="frog">🐸 Frog</button>
+</div>
+
+<!-- STATUS -->
+<div id="statusRow" class="flex items-center gap-3 mb-4 text-purple-300 font-medium">
+  <div class="loader"></div>
+  <span id="statusText">Đang tải MediaPipe AI model...</span>
+</div>
+
+<!-- ERROR -->
+<div id="errBox" class="hidden glass border-red-500/40 text-red-300 p-4 rounded-lg mb-4 text-center max-w-lg w-full"></div>
+
+<!-- CANVAS -->
+<div class="canvas-container" id="canvasWrap" style="display:none">
+  <div id="overlay-hint">👆 Nhìn thẳng vào camera</div>
+  <video id="vid" autoplay playsinline></video>
+  <canvas id="cvs"></canvas>
+</div>
+
+<!-- STATS + EXPRESSION -->
+<div id="statsRow" class="hidden flex flex-wrap justify-center gap-4 mt-4">
+  <div class="glass p-3 stat-box min-w-[140px]">
+    <div>FPS: <span id="fpsVal" class="text-yellow-300">0</span></div>
+    <div>EAR L: <span id="earL">0.00</span> R: <span id="earR">0.00</span></div>
+    <div>MAR: <span id="marVal">0.00</span></div>
+    <div>Tilt: <span id="tiltVal">0.0</span>°</div>
+  </div>
+  <div class="glass p-3 flex flex-col items-center justify-center min-w-[140px]">
+    <div class="text-3xl mb-1" id="exprIcon">😊</div>
+    <div class="expr-badge" id="exprText">Neutral</div>
+  </div>
+</div>
+
+<script type="module">
+// ═══════════════════════════════════════════════
+//  CONSTANTS & STATE
+// ═══════════════════════════════════════════════
+const SKINS = {
+  cat: {
+    earColor:'#ffcc88', earInner:'#ff9944', earType:'triangle',
+    faceColor:'#ffe0b2', faceGrad:'#ffcc99',
+    iris:'#4488ff', pupil:'#1a1a2e',
+    brow:'#8b5e3c', outline:'#5a3e28',
+    blush:'rgba(255,140,140,0.35)',
+    whiskers: true, tailColor:'#ffcc88'
+  },
+  rabbit: {
+    earColor:'#ffffff', earInner:'#ffaacc', earType:'oval',
+    faceColor:'#fff0f5', faceGrad:'#ffd6e7',
+    iris:'#ff66aa', pupil:'#2d0022',
+    brow:'#b07090', outline:'#8a5070',
+    blush:'rgba(255,120,180,0.30)',
+    whiskers: false, tailColor:'#ffffff'
+  },
+  fox: {
+    earColor:'#ff7722', earInner:'#ffffff', earType:'triangle_big',
+    faceColor:'#ffe8cc', faceGrad:'#ffbb88',
+    iris:'#ffaa00', pupil:'#1a0d00',
+    brow:'#7a3800', outline:'#7a3800',
+    blush:'rgba(255,140,80,0.30)',
+    whiskers: true, tailColor:'#ff7722'
+  },
+  bear: {
+    earColor:'#8b6045', earInner:'#c49a6c', earType:'round',
+    faceColor:'#c49a6c', faceGrad:'#a0704a',
+    iris:'#3a2010', pupil:'#1a0d00',
+    brow:'#4a2800', outline:'#4a2800',
+    blush:'rgba(200,120,80,0.35)',
+    whiskers: false, tailColor:'#8b6045'
+  },
+  frog: {
+    earColor:'#43a047', earInner:'#81c784', earType:'frog_bump',
+    faceColor:'#66bb6a', faceGrad:'#388e3c',
+    iris:'#1b5e20', pupil:'#0a1a0a',
+    brow:'#2e7d32', outline:'#1b5e20',
+    blush:'rgba(100,200,100,0.20)',
+    whiskers: false, tailColor:'#43a047',
+    eyeScale: 1.45,
+    mouthWide: true
+  }
+};
+
+const EXPRESSIONS = {
+  neutral:   { icon:'😊', label:'Neutral',   color:'#b06aff' },
+  happy:     { icon:'😄', label:'Happy',     color:'#ffdd44' },
+  sad:       { icon:'😢', label:'Sad',       color:'#88aaff' },
+  surprised: { icon:'😲', label:'Surprised', color:'#ff88aa' },
+  wink:      { icon:'😉', label:'Wink!',     color:'#cc88ff' },
+  angry:     { icon:'😠', label:'Angry',     color:'#ff6644' },
+};
+
+let faceLandmarker = null;
+let isRunning = false;
+let lastVideoTime = -1;
+let useFrontCam = true;
+let showRealBg = false;
+let currentSkin = 'cat';
+let lastFaceTime = 0;
+
+// smooth values
+let smX=0, smY=0, smS=1, smA=0, smEL=0.3, smER=0.3, smM=0;
+let smBrowL=0, smBrowR=0;
+const LR = 0.25; // lerp rate — higher = more responsive
+
+// particles
+const particles = [];
+
+// FPS
+let fpsArr = [], lastFpsTime = 0, displayFps = 0;
+
+// ═══════════════════════════════════════════════
+//  DOM
+// ═══════════════════════════════════════════════
+const vid    = document.getElementById('vid');
+const cvs    = document.getElementById('cvs');
+const ctx    = cvs.getContext('2d');
+const startBtn    = document.getElementById('startBtn');
+const camSwitch   = document.getElementById('camSwitch');
+const bgToggle    = document.getElementById('bgToggle');
+const screenshotBtn = document.getElementById('screenshotBtn');
+const statusText  = document.getElementById('statusText');
+const statusRow   = document.getElementById('statusRow');
+const errBox      = document.getElementById('errBox');
+const canvasWrap  = document.getElementById('canvasWrap');
+const statsRow    = document.getElementById('statsRow');
+const fpsVal      = document.getElementById('fpsVal');
+const earLEl      = document.getElementById('earL');
+const earREl      = document.getElementById('earR');
+const marEl       = document.getElementById('marVal');
+const tiltEl      = document.getElementById('tiltVal');
+const exprIcon    = document.getElementById('exprIcon');
+const exprText    = document.getElementById('exprText');
+
+// ═══════════════════════════════════════════════
+//  MEDIAPIPE LOAD — 3 CDN fallback
+// ═══════════════════════════════════════════════
+async function loadMediaPipe() {
+  const CDNs = [
+    { name:'esm.sh',   mod:'https://esm.sh/@mediapipe/tasks-vision@0.10.12',
+      wasm:'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm' },
+    { name:'jsDelivr', mod:'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/vision_bundle.js',
+      wasm:'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm' },
+    { name:'unpkg',    mod:'https://unpkg.com/@mediapipe/tasks-vision@0.10.12/vision_bundle.js',
+      wasm:'https://unpkg.com/@mediapipe/tasks-vision@0.10.12/wasm' },
+  ];
+  let Vision, wasmPath, errors = [];
+  for (const cdn of CDNs) {
+    try {
+      statusText.textContent = `Kết nối ${cdn.name}...`;
+      Vision = await import(cdn.mod);
+      wasmPath = cdn.wasm;
+      break;
+    } catch(e) { errors.push(`${cdn.name}: ${e.message}`); }
+  }
+  if (!Vision) throw new Error('Không load được MediaPipe:\n' + errors.join('\n'));
+
+  statusText.textContent = 'Khởi tạo AI model...';
+  const { FaceLandmarker, FilesetResolver } = Vision;
+  const fs = await FilesetResolver.forVisionTasks(wasmPath);
+  faceLandmarker = await FaceLandmarker.createFromOptions(fs, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate: 'CPU'
+    },
+    outputFaceBlendshapes: true,   // ← KEY: smooth blendshapes
+    runningMode: 'VIDEO',
+    numFaces: 1
+  });
+  statusRow.style.display = 'none';
+  startBtn.disabled = false;
+}
+
+// ═══════════════════════════════════════════════
+//  CAMERA
+// ═══════════════════════════════════════════════
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: useFrontCam ? 'user' : 'environment',
+             width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  vid.srcObject = stream;
+  await new Promise(r => vid.addEventListener('loadeddata', r, { once: true }));
+  cvs.width  = vid.videoWidth;
+  cvs.height = vid.videoHeight;
+  // init smooth center
+  smX = cvs.width / 2; smY = cvs.height / 2;
+}
+
+// ═══════════════════════════════════════════════
+//  MATH HELPERS
+// ═══════════════════════════════════════════════
+const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+const lerp  = (a,b,t) => a + (b-a)*t;
+const clamp = (v,mn,mx) => Math.min(Math.max(v,mn),mx);
+
+// ═══════════════════════════════════════════════
+//  MAIN RENDER LOOP
+// ═══════════════════════════════════════════════
+function renderLoop() {
+  if (!isRunning) return;
+
+  // FPS
+  const now = performance.now();
+  fpsArr.push(now);
+  fpsArr = fpsArr.filter(t => now - t < 1000);
+  if (now - lastFpsTime > 200) {
+    displayFps = fpsArr.length;
+    fpsVal.textContent = displayFps;
+    lastFpsTime = now;
+  }
+
+  if (cvs.width !== vid.videoWidth) {
+    cvs.width = vid.videoWidth; cvs.height = vid.videoHeight;
+  }
+
+  if (lastVideoTime !== vid.currentTime && faceLandmarker) {
+    lastVideoTime = vid.currentTime;
+    const result = faceLandmarker.detectForVideo(vid, now);
+
+    // --- DRAW BACKGROUND ---
+    ctx.clearRect(0, 0, cvs.width, cvs.height);
+    if (showRealBg) {
+      ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+    } else {
+      // Animated gradient background
+      const grad = ctx.createLinearGradient(0, 0, cvs.width, cvs.height);
+      grad.addColorStop(0, '#0d0d1a');
+      grad.addColorStop(1, '#1a0d2e');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, cvs.width, cvs.height);
+      // subtle grid
+      ctx.strokeStyle = 'rgba(176,106,255,0.05)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < cvs.width; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,cvs.height); ctx.stroke();
+      }
+      for (let y = 0; y < cvs.height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(cvs.width,y); ctx.stroke();
+      }
+    }
+
+    if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+      lastFaceTime = now;
+      const lm = result.faceLandmarks[0];
+      const bs = result.faceBlendshapes?.[0]?.categories || [];
+      drawVTuber(lm, bs, cvs.width, cvs.height);
+    } else {
+      // idle breathing
+      drawIdle(cvs.width, cvs.height, now);
+    }
+
+    // particles
+    updateParticles();
+    drawParticles();
+  }
+
+  requestAnimationFrame(renderLoop);
+}
+
+// ═══════════════════════════════════════════════
+//  VTUBE DRAWING — THE CORE
+// ═══════════════════════════════════════════════
+function drawVTuber(lm, blendshapes, W, H) {
+  const P = i => ({ x: lm[i].x * W, y: lm[i].y * H });
+
+  // Key landmarks
+  const noseTip  = P(1);
+  const faceL    = P(234), faceR = P(454);
+  const eyeLin   = P(133), eyeLout = P(33);
+  const eyeRin   = P(362), eyeRout = P(263);
+  const eyeLtop  = P(159), eyeLbot = P(145);
+  const eyeRtop  = P(386), eyeRbot = P(374);
+  const mouthTop = P(13),  mouthBot = P(14);
+  const mouthL   = P(61),  mouthR  = P(291);
+  const browLin  = P(107), browLout = P(70);
+  const browRin  = P(336), browRout = P(300);
+
+  // Scale = face width
+  const faceWidth = dist(faceL, faceR);
+  const S = faceWidth * 1.55;
+
+  // Head rotation angle
+  const A = Math.atan2(eyeRin.y - eyeLin.y, eyeRin.x - eyeLin.x);
+
+  // EAR (eye open ratio)
+  const earL_raw = dist(eyeLtop, eyeLbot) / dist(eyeLin, eyeLout);
+  const earR_raw = dist(eyeRtop, eyeRbot) / dist(eyeRin, eyeRout);
+
+  // MAR (mouth open ratio)
+  const mar_raw = dist(mouthTop, mouthBot) / dist(mouthL, mouthR);
+
+  // Blendshape-based eyebrow raise
+  const getBs = name => (blendshapes.find(b => b.categoryName === name)?.score ?? 0);
+  const browLiftL = getBs('browInnerUp') + getBs('browOuterUpLeft') * 0.5;
+  const browLiftR = getBs('browInnerUp') + getBs('browOuterUpRight') * 0.5;
+  const browFurrow = getBs('browDownLeft') + getBs('browDownRight');
+
+  // SMOOTH interpolation
+  smX  = lerp(smX,  noseTip.x, LR);
+  smY  = lerp(smY,  noseTip.y, LR);
+  smS  = lerp(smS,  S, LR);
+  smA  = lerp(smA,  A, LR);
+  smEL = lerp(smEL, earL_raw, LR * 1.5);
+  smER = lerp(smER, earR_raw, LR * 1.5);
+  smM  = lerp(smM,  mar_raw,  LR * 1.5);
+  smBrowL = lerp(smBrowL, browLiftL, LR);
+  smBrowR = lerp(smBrowR, browLiftR, LR);
+
+  const blinkL = smEL < 0.22;
+  const blinkR = smER < 0.22;
+  const mouthOpen = smM;
+
+  // Expression detection (using blendshapes + EAR/MAR)
+  let expr = 'neutral';
+  if (smEL < 0.15 && smER > 0.28) expr = 'wink';
+  else if (smER < 0.15 && smEL > 0.28) expr = 'wink';
+  else if (smEL > 0.35 && smER > 0.35 && smM > 0.45) expr = 'surprised';
+  else if (smM > 0.25 && browFurrow > 0.3) expr = 'angry';
+  else if (smM > 0.2 && browLiftL > 0.2) expr = 'happy';
+  else if (browFurrow > 0.4 && smM < 0.1) expr = 'angry';
+  else if (getBs('mouthFrownLeft') + getBs('mouthFrownRight') > 0.4) expr = 'sad';
+  else if (getBs('mouthSmileLeft') + getBs('mouthSmileRight') > 0.5) expr = 'happy';
+
+  updateExpressionUI(expr);
+  maybeSpawnParticle(smX, smY, smS, expr);
+
+  // UPDATE STATS
+  earLEl.textContent = smEL.toFixed(3);
+  earREl.textContent = smER.toFixed(3);
+  marEl.textContent  = smM.toFixed(3);
+  tiltEl.textContent = (smA * 180 / Math.PI).toFixed(1);
+
+  // DRAW
+  ctx.save();
+  ctx.translate(smX, smY);
+  ctx.rotate(smA);
+
+  drawCharacter(smS, blinkL, blinkR, mouthOpen, expr, smBrowL, smBrowR);
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════
+//  CHARACTER DRAWING
+// ═══════════════════════════════════════════════
+function drawCharacter(S, blinkL, blinkR, mouthOpen, expr, browL, browR) {
+  const sk = SKINS[currentSkin];
+
+  // 1. EARS (behind face)
+  drawEars(S, sk);
+
+  // 2. FACE BASE
+  const faceGrad = ctx.createRadialGradient(-S*0.05, -S*0.05, S*0.1, 0, 0, S*0.55);
+  faceGrad.addColorStop(0, sk.faceColor);
+  faceGrad.addColorStop(1, sk.faceGrad);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, S * 0.5, S * 0.48, 0, 0, Math.PI * 2);
+  ctx.fillStyle = faceGrad;
+  ctx.fill();
+  ctx.lineWidth = S * 0.018;
+  ctx.strokeStyle = sk.outline;
+  ctx.stroke();
+
+  // 3. BLUSH
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = sk.blush;
+  ctx.beginPath(); ctx.ellipse(-S*0.26, S*0.08, S*0.1, S*0.055, -0.3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( S*0.26, S*0.08, S*0.1, S*0.055,  0.3, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // 4. EYEBROWS
+  drawEyebrows(S, sk, expr, browL, browR, blinkL, blinkR);
+
+  // 5. EYES
+  drawEye(S, -1, blinkL, sk, expr === 'wink' ? (blinkL ? 'wink' : '') : '');
+  drawEye(S,  1, blinkR, sk, expr === 'wink' ? (blinkR ? 'wink' : '') : '');
+
+  // 6. NOSE
+  ctx.fillStyle = sk.blush.replace('0.35','0.6').replace('0.30','0.6').replace('0.30','0.6');
+  ctx.beginPath();
+  ctx.ellipse(0, S*0.1, S*0.025, S*0.018, 0, 0, Math.PI*2);
+  ctx.fillStyle = sk.outline;
+  ctx.globalAlpha = 0.3;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // 7. MOUTH
+  drawMouth(S, mouthOpen, expr, sk);
+
+  // 8. WHISKERS (cat/fox)
+  if (sk.whiskers) drawWhiskers(S, sk);
+}
+
+// ── EARS ──
+function drawEars(S, sk) {
+  const type = sk.earType;
+  ctx.save();
+  if (type === 'triangle' || type === 'triangle_big') {
+    const w = type === 'triangle_big' ? 0.24 : 0.2;
+    const h = type === 'triangle_big' ? 0.75 : 0.65;
+    [[-1],[1]].forEach(([side]) => {
+      // outer
+      ctx.fillStyle = sk.earColor;
+      ctx.beginPath();
+      ctx.moveTo(side * S*w*0.5, -S*0.28);
+      ctx.lineTo(side * S*(w*0.5 + 0.18), -S*h);
+      ctx.lineTo(side * S*(w*0.5 - 0.15), -S*0.42);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = sk.outline; ctx.lineWidth = S*0.015; ctx.stroke();
+      // inner
+      ctx.fillStyle = sk.earInner;
+      ctx.beginPath();
+      ctx.moveTo(side * S*w*0.5, -S*0.33);
+      ctx.lineTo(side * S*(w*0.5 + 0.1), -S*(h-0.1));
+      ctx.lineTo(side * S*(w*0.5 - 0.08), -S*0.44);
+      ctx.closePath(); ctx.fill();
+    });
+  } else if (type === 'oval') {
+    [[-1],[1]].forEach(([side]) => {
+      ctx.save();
+      ctx.translate(side * S*0.22, -S*0.42);
+      ctx.rotate(side * 0.15);
+      ctx.fillStyle = sk.earColor;
+      ctx.beginPath(); ctx.ellipse(0, 0, S*0.1, S*0.3, 0, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = sk.outline; ctx.lineWidth = S*0.015; ctx.stroke();
+      ctx.fillStyle = sk.earInner;
+      ctx.beginPath(); ctx.ellipse(0, S*0.03, S*0.055, S*0.2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+  } else if (type === 'round') {
+    [[-1],[1]].forEach(([side]) => {
+      ctx.fillStyle = sk.earColor;
+      ctx.beginPath(); ctx.arc(side*S*0.32, -S*0.38, S*0.14, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = sk.outline; ctx.lineWidth = S*0.015; ctx.stroke();
+      ctx.fillStyle = sk.earInner;
+      ctx.beginPath(); ctx.arc(side*S*0.32, -S*0.38, S*0.08, 0, Math.PI*2); ctx.fill();
+    });
+  } else if (type === 'frog_bump') {
+    // Frog: 2 bướu mắt tròn nhô lên trên đỉnh đầu
+    [[-1],[1]].forEach(([side]) => {
+      // Bướu ngoài (xanh đậm)
+      ctx.fillStyle = sk.earColor;
+      ctx.beginPath();
+      ctx.arc(side * S * 0.2, -S * 0.46, S * 0.11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = sk.outline;
+      ctx.lineWidth = S * 0.014;
+      ctx.stroke();
+      // Bướu trong (xanh nhạt hơn)
+      ctx.fillStyle = sk.earInner;
+      ctx.beginPath();
+      ctx.arc(side * S * 0.2, -S * 0.48, S * 0.055, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  ctx.restore();
+}
+
+// ── EYEBROWS ──
+function drawEyebrows(S, sk, expr, browL, browR, blinkL, blinkR) {
+  ctx.strokeStyle = sk.brow;
+  ctx.lineWidth = S * 0.028;
+  ctx.lineCap = 'round';
+
+  const lift = (expr === 'surprised') ? 0.09 : 0;
+  const furrow = (expr === 'angry') ? 0.04 : 0;
+  const sadTilt = (expr === 'sad') ? 0.04 : 0;
+  const blendLift = browL * 0.08;
+
+  [[- 1, blinkL], [1, blinkR]].forEach(([side, blink]) => {
+    const baseY = -S * (0.22 + lift + blendLift);
+    const outerY = baseY + (side === -1 ? -furrow : furrow) + (side === -1 ? sadTilt : -sadTilt);
+    const innerY = baseY - (side === -1 ? furrow : -furrow) + (side === -1 ? -sadTilt : sadTilt);
+    if (blink) { ctx.globalAlpha = 0.4; } else { ctx.globalAlpha = 1; }
+    ctx.beginPath();
+    ctx.moveTo(side * S*0.08, innerY);
+    ctx.quadraticCurveTo(side * S*0.185, outerY - S*0.015, side * S*0.30, outerY);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+}
+
+// ── EYE ──
+function drawEye(S, side, blink, sk, specialWink) {
+  const es = sk.eyeScale || 1;  // hệ số phóng to mắt (frog = 1.45)
+  const ex = side * S * 0.2;
+  const ey = -S * 0.06;
+
+  if (blink || specialWink === 'wink') {
+    // closed / wink — curved line
+    ctx.strokeStyle = sk.outline;
+    ctx.lineWidth = S * 0.025;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ex - S*0.08, ey);
+    ctx.quadraticCurveTo(ex, ey + S*0.06, ex + S*0.08, ey);
+    ctx.stroke();
+    // wink star
+    if (specialWink === 'wink') {
+      ctx.fillStyle = '#ffdd44';
+      ctx.font = `${S*0.15}px serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('✦', ex, ey - S*0.07);
+    }
+    return;
+  }
+
+  // WHITE SCLERA
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey, S*0.095*es, S*0.085*es, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = sk.outline;
+  ctx.lineWidth = S * 0.016;
+  ctx.stroke();
+
+  // TOP LASH shadow
+  ctx.fillStyle = sk.outline;
+  ctx.globalAlpha = 0.15;
+  ctx.beginPath();
+  ctx.ellipse(ex, ey - S*0.02*es, S*0.095*es, S*0.04*es, 0, Math.PI, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // IRIS gradient
+  const irisGrad = ctx.createRadialGradient(ex - S*0.02, ey - S*0.02, S*0.005, ex, ey, S*0.07*es);
+  irisGrad.addColorStop(0, lighten(sk.iris, 40));
+  irisGrad.addColorStop(0.6, sk.iris);
+  irisGrad.addColorStop(1, darken(sk.iris, 30));
+  ctx.fillStyle = irisGrad;
+  ctx.beginPath();
+  ctx.ellipse(ex, ey, S*0.065*es, S*0.07*es, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // PUPIL
+  ctx.fillStyle = sk.pupil;
+  ctx.beginPath();
+  ctx.ellipse(ex, ey, S*0.035*es, S*0.04*es, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // HIGHLIGHT 1
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.ellipse(ex - S*0.025*es, ey - S*0.03*es, S*0.022*es, S*0.018*es, -0.5, 0, Math.PI*2);
+  ctx.fill();
+
+  // HIGHLIGHT 2 (small)
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath();
+  ctx.arc(ex + S*0.022*es, ey + S*0.015*es, S*0.01*es, 0, Math.PI*2);
+  ctx.fill();
+
+  // TOP LASHES
+  ctx.strokeStyle = sk.outline;
+  ctx.lineWidth = S * 0.018;
+  ctx.lineCap = 'round';
+  for (let i = -2; i <= 2; i++) {
+    const lx = ex + i * S*0.018*es;
+    ctx.beginPath();
+    ctx.moveTo(lx, ey - S*0.082*es);
+    ctx.lineTo(lx + i*S*0.01*es, ey - S*0.11*es - (i===0 ? S*0.01*es : 0));
+    ctx.stroke();
+  }
+}
+
+// ── MOUTH ──
+function drawMouth(S, mar, expr, sk) {
+  ctx.strokeStyle = sk.outline;
+  ctx.lineWidth = S * 0.022;
+  ctx.lineCap = 'round';
+
+  const my = S * 0.2;
+  const mw = sk.mouthWide ? 1.45 : 1.0;  // hệ số miệng rộng (frog = 1.45)
+
+  if (expr === 'happy') {
+    ctx.fillStyle = 'rgba(220,100,120,0.25)';
+    ctx.beginPath();
+    ctx.moveTo(-S*0.2*mw, my - S*0.01);
+    ctx.quadraticCurveTo(0, my + S*0.14, S*0.2*mw, my - S*0.01);
+    ctx.quadraticCurveTo(0, my + S*0.05, -S*0.2*mw, my - S*0.01);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-S*0.2*mw, my - S*0.01);
+    ctx.quadraticCurveTo(0, my + S*0.14, S*0.2*mw, my - S*0.01);
+    ctx.stroke();
+  } else if (expr === 'sad') {
+    ctx.beginPath();
+    ctx.moveTo(-S*0.15*mw, my + S*0.06);
+    ctx.quadraticCurveTo(0, my - S*0.04, S*0.15*mw, my + S*0.06);
+    ctx.stroke();
+  } else if (expr === 'angry') {
+    ctx.beginPath();
+    ctx.moveTo(-S*0.15*mw, my + S*0.04);
+    ctx.quadraticCurveTo(0, my + S*0.01, S*0.15*mw, my + S*0.04);
+    ctx.stroke();
+  } else if (mar > 0.1) {
+    // Mouth open — scales with MAR
+    const openH = clamp((mar - 0.1) / 0.6, 0, 1);
+    const rw = S * (0.1 + openH * 0.1);
+    const rh = S * (0.03 + openH * 0.14);
+
+    // Outer lips
+    ctx.fillStyle = darken(sk.faceGrad, 30);
+    ctx.beginPath();
+    ctx.ellipse(0, my + rh*0.2, rw + S*0.03, rh + S*0.025, 0, 0, Math.PI*2);
+    ctx.fill(); ctx.stroke();
+
+    // Inner mouth (dark)
+    ctx.fillStyle = 'rgba(80,20,30,0.85)';
+    ctx.beginPath();
+    ctx.ellipse(0, my + rh*0.3, rw, rh, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // Teeth
+    if (openH > 0.3) {
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.beginPath();
+      ctx.ellipse(0, my + rh*0.05, rw * 0.85, S*0.028, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // Tongue (wenn sehr offen)
+    if (openH > 0.6) {
+      ctx.fillStyle = '#ff8899';
+      ctx.beginPath();
+      ctx.ellipse(0, my + rh*0.7, rw*0.5, rh*0.4, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+  } else {
+    // neutral smile — rộng hơn với frog
+    ctx.beginPath();
+    ctx.moveTo(-S*0.14*mw, my);
+    ctx.quadraticCurveTo(0, my + S*0.07, S*0.14*mw, my);
+    ctx.stroke();
+  }
+}
+
+// ── WHISKERS ──
+function drawWhiskers(S, sk) {
+  ctx.strokeStyle = sk.outline;
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = S * 0.01;
+  ctx.lineCap = 'round';
+  [[-1],[1]].forEach(([side]) => {
+    for (let i = 0; i < 3; i++) {
+      const yo = (i-1) * S * 0.07;
+      ctx.beginPath();
+      ctx.moveTo(side * S*0.1, S*0.08 + yo);
+      ctx.lineTo(side * S*0.44, S*0.04 + yo + (i-1)*S*0.03);
+      ctx.stroke();
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+
+// ── IDLE (no face) ──
+function drawIdle(W, H, now) {
+  const t = now / 1000;
+  const breathY = Math.sin(t * 1.2) * 5;
+  const S = Math.min(W, H) * 0.35;
+
+  ctx.save();
+  ctx.translate(W/2, H/2 + breathY);
+  ctx.rotate(Math.sin(t * 0.4) * 0.02);
+
+  smEL = lerp(smEL, 0.3, 0.05);
+  smER = lerp(smER, 0.3, 0.05);
+  smM  = lerp(smM,  0.0, 0.05);
+
+  drawCharacter(S, false, false, 0, 'neutral', 0, 0);
+  ctx.restore();
+
+  // dim hint
+  ctx.fillStyle = 'rgba(176,106,255,0.5)';
+  ctx.font = `${Math.min(W,H)*0.025}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('👤 Nhìn thẳng vào camera...', W/2, H - 30);
+}
+
+// ═══════════════════════════════════════════════
+//  PARTICLES
+// ═══════════════════════════════════════════════
+let lastParticleExpr = 'neutral';
+let particleTimer = 0;
+
+function maybeSpawnParticle(x, y, S, expr) {
+  particleTimer++;
+  if (expr === 'neutral') { lastParticleExpr = expr; return; }
+  if (particleTimer % 6 !== 0) return;
+  if (particles.length > 25) return;
+
+  const configs = {
+    happy:     { emojis:['❤','✨','💕','🌸'], vy:-3.5, col:'#ff88aa' },
+    surprised: { emojis:['⭐','✦','💫','🌟'], vy:-2,   col:'#ffdd44' },
+    sad:       { emojis:['💧','😢',''],        vy:3,    col:'#88aaff' },
+    angry:     { emojis:['💢','⚡','🔥'],       vy:-2.5, col:'#ff6644' },
+    wink:      { emojis:['✨','💜','🌟','⭐'], vy:-3,   col:'#cc88ff' },
+  };
+  const cfg = configs[expr];
+  if (!cfg) return;
+
+  particles.push({
+    x: x + (Math.random()-0.5)*S*0.6,
+    y: y + (Math.random()-0.5)*S*0.4,
+    vx: (Math.random()-0.5)*2,
+    vy: cfg.vy + (Math.random()-0.5),
+    life: 1.0,
+    decay: 0.015 + Math.random()*0.01,
+    size: S * (0.08 + Math.random()*0.08),
+    emoji: cfg.emojis[Math.floor(Math.random()*cfg.emojis.length)],
+    rot: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random()-0.5) * 0.1,
+  });
+}
+
+function updateParticles() {
+  for (let i = particles.length-1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy *= 0.98;
+    p.rot += p.rotSpeed; p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i,1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.font = `${p.size}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.emoji, 0, 0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ═══════════════════════════════════════════════
+//  EXPRESSION UI
+// ═══════════════════════════════════════════════
+let lastExpr = 'neutral';
+function updateExpressionUI(expr) {
+  if (expr === lastExpr) return;
+  lastExpr = expr;
+  const e = EXPRESSIONS[expr] || EXPRESSIONS.neutral;
+  exprIcon.textContent = e.icon;
+  exprText.textContent = e.label;
+  exprText.style.background = `${e.color}33`;
+  exprText.style.borderColor = `${e.color}88`;
+  exprText.style.color = e.color;
+}
+
+// ═══════════════════════════════════════════════
+//  COLOR HELPERS
+// ═══════════════════════════════════════════════
+function lighten(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, (n>>16) + amt);
+  const g = Math.min(255, ((n>>8)&0xff) + amt);
+  const b = Math.min(255, (n&0xff) + amt);
+  return `rgb(${r},${g},${b})`;
+}
+function darken(hex, amt) {
+  if (hex.startsWith('rgb')) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, (n>>16) - amt);
+  const g = Math.max(0, ((n>>8)&0xff) - amt);
+  const b = Math.max(0, (n&0xff) - amt);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ═══════════════════════════════════════════════
+//  EVENT HANDLERS
+// ═══════════════════════════════════════════════
+startBtn.addEventListener('click', async () => {
+  if (!faceLandmarker) { alert('AI model chưa load xong, chờ tí nha!'); return; }
+
+  if (isRunning) {
+    isRunning = false;
+    const s = vid.srcObject;
+    if (s) s.getTracks().forEach(t => t.stop());
+    vid.srcObject = null;
+    canvasWrap.style.display = 'none';
+    camSwitch.classList.add('hidden');
+    bgToggle.classList.add('hidden');
+    screenshotBtn.classList.add('hidden');
+    statsRow.classList.add('hidden');
+    startBtn.innerHTML = '🎬 Bắt đầu VTuber';
+    startBtn.style.background = 'linear-gradient(135deg,#b06aff,#ff6ab0)';
+    return;
+  }
+
+  try {
+    await startCamera();
+    isRunning = true;
+    canvasWrap.style.display = 'block';
+    camSwitch.classList.remove('hidden');
+    bgToggle.classList.remove('hidden');
+    screenshotBtn.classList.remove('hidden');
+    statsRow.classList.remove('hidden');
+    startBtn.innerHTML = '⏹ Dừng VTuber';
+    startBtn.style.background = 'linear-gradient(135deg,#ff4466,#cc2244)';
+    requestAnimationFrame(renderLoop);
+  } catch(e) {
+    errBox.textContent = 'Không thể mở camera: ' + e.message;
+    errBox.classList.remove('hidden');
+  }
+});
+
+camSwitch.addEventListener('click', async () => {
+  useFrontCam = !useFrontCam;
+  if (isRunning) {
+    const s = vid.srcObject;
+    if (s) s.getTracks().forEach(t => t.stop());
+    vid.srcObject = null;
+    await startCamera();
+  }
+});
+
+bgToggle.addEventListener('click', () => {
+  showRealBg = !showRealBg;
+  bgToggle.textContent = showRealBg ? '🌌 Nền ảo' : '🖼 Nền thật';
+  bgToggle.style.background = showRealBg ? '#2d6a4f' : '';
+});
+
+screenshotBtn.addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = cvs.toDataURL('image/png');
+  a.download = `vtuberpro-${Date.now()}.png`;
+  a.click();
+});
+
+document.querySelectorAll('.skin-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.skin-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentSkin = btn.dataset.skin;
+  });
+});
+
+// ═══════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════
+try {
+  await loadMediaPipe();
+  startBtn.disabled = false;
+} catch(e) {
+  statusRow.style.display = 'none';
+  errBox.innerHTML = `<b>Lỗi load MediaPipe:</b><br>${e.message}<br><small>Thử tắt AdBlock hoặc kiểm tra kết nối mạng.</small>`;
+  errBox.classList.remove('hidden');
+}
+</script>
+<footer class="mt-8 mb-2 text-center text-xs" style="color:#6b6b8a;">
+  by 121170906 阮文強 &nbsp;·&nbsp; Web VTuber Pro
+</footer>
+</body>
+</html>
